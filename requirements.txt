@@ -1,7 +1,4 @@
-pandas
-scikit-learn
-SpeechRecognition
-pyttsx3
-joblib
-PyAudio
 Flask
+joblib
+scikit-learn
+numpy
