@@ -1,68 +1,124 @@
-"""Flask web application for the Voice Mate assistant."""
-
-from flask import Flask, jsonify, render_template, request
-
-from voice_mate import VoiceMateService
-
+from flask import Flask, render_template, request, jsonify
+import joblib
+import datetime
+import urllib.parse
 
 app = Flask(__name__)
-assistant_service = VoiceMateService()
+
+model = joblib.load("model.pkl")
+vectorizer = joblib.load("vectorizer.pkl")
 
 
-@app.get("/")
-def index():
-    """Render the Voice Mate dashboard."""
-    return render_template("index.html", model_name=assistant_service.model_name)
+@app.route("/")
+def home():
+    return render_template("index.html")
 
 
-@app.get("/api/health")
+@app.route("/predict", methods=["POST"])
+def predict():
+    try:
+        data = request.get_json()
+        command = data.get("command", "").strip().lower()
+
+        if not command:
+            return jsonify({
+                "success": False,
+                "response": "Please enter a command.",
+                "intent": "",
+                "action": ""
+            })
+
+        vector = vectorizer.transform([command])
+        intent = model.predict(vector)[0]
+
+        response = "Sorry, I did not understand your command."
+        action = "none"
+        url = ""
+
+        if intent == "open_youtube":
+            response = "Opening YouTube"
+            action = "open_url"
+            url = "https://www.youtube.com"
+
+        elif intent == "open_google":
+            response = "Opening Google"
+            action = "open_url"
+            url = "https://www.google.com"
+
+        elif intent == "open_github":
+            response = "Opening GitHub"
+            action = "open_url"
+            url = "https://github.com"
+
+        elif intent == "search_youtube":
+            search = command.replace("search", "").replace("youtube", "").strip()
+
+            if search:
+                response = f"Searching YouTube for {search}"
+                action = "open_url"
+                url = "https://www.youtube.com/results?search_query=" + urllib.parse.quote_plus(search)
+
+        elif intent == "search_google":
+            search = command.replace("search", "").replace("google", "").strip()
+
+            if search:
+                response = f"Searching Google for {search}"
+                action = "open_url"
+                url = "https://www.google.com/search?q=" + urllib.parse.quote_plus(search)
+
+        elif intent == "tell_time":
+            current_time = datetime.datetime.now().strftime("%I:%M %p")
+            response = f"The time is {current_time}"
+
+        elif intent == "tell_date":
+            today = datetime.datetime.now().strftime("%d %B %Y")
+            response = f"Today is {today}"
+
+        elif intent == "weather":
+            response = "Opening weather information"
+            action = "open_url"
+            url = "https://www.google.com/search?q=weather"
+
+        elif intent == "play_music":
+            song = command.replace("play", "").replace("music", "").strip()
+
+            if not song:
+                song = "trending songs"
+
+            response = f"Playing {song}"
+            action = "open_url"
+            url = "https://www.youtube.com/results?search_query=" + urllib.parse.quote_plus(song)
+
+        elif intent == "open_calculator":
+            response = "Calculator command detected"
+            action = "none"
+
+        else:
+            response = f"I detected the command: {intent}"
+
+        return jsonify({
+            "success": True,
+            "response": response,
+            "intent": intent,
+            "action": action,
+            "url": url
+        })
+
+    except Exception as e:
+        print("ERROR:", e)
+
+        return jsonify({
+            "success": False,
+            "response": "Something went wrong.",
+            "intent": "",
+            "action": ""
+        }), 500
+
+
+@app.route("/health")
 def health():
-    """Provide a lightweight readiness check for the browser interface."""
-    return jsonify({"status": "Ready", "model": assistant_service.model_name})
-
-
-@app.post("/api/command")
-def command():
-    """Classify and execute one typed or browser-recognized command."""
-    payload = request.get_json(silent=True) or {}
-    user_command = payload.get("command", "")
-    reminder = payload.get("reminder", "")
-    browser_tts = payload.get("browser_tts", False)
-
-    if not isinstance(user_command, str) or not user_command.strip():
-        return jsonify({"error": "Please type or say a command.", "status": "Ready"}), 400
-    if not isinstance(reminder, str):
-        return jsonify({"error": "Reminder text must be valid text.", "status": "Ready"}), 400
-
-    print("COMMAND RECEIVED:", user_command)
-    prediction = assistant_service.predict_intent_details(user_command)
-    intent = prediction["intent"]
-    print("PREDICTED INTENT:", intent)
-    result = assistant_service.execute_command(intent, user_command, reminder)
-    if browser_tts is True:
-        voice_available, voice_notice = True, None
-    else:
-        voice_available, voice_notice = assistant_service.speak_response(result.message)
-
-    return jsonify(
-        {
-            "success": result.success,
-            "response": result.message,
-            "message": result.message,
-            "intent": prediction["intent"] or "unknown",
-            "confidence": round(prediction["confidence"] * 100, 1),
-            "model": assistant_service.model_name,
-            "status": "Ready",
-            "keep_running": result.keep_running,
-            "needs_reminder": prediction["intent"] == "set_reminder" and not reminder.strip(),
-            "action": "open_url" if result.action_url else "none",
-            "action_url": result.action_url,
-            "url": result.action_url,
-            "voice_output_available": voice_available,
-            "voice_notice": voice_notice,
-        }
-    )
+    return jsonify({"status": "running"})
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=False)
+    app.run(debug=True)
